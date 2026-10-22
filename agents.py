@@ -14,7 +14,8 @@ import json
 import os
 import re
 
-from issues import find_issues
+from hmem import HMem
+from issues import _model_now, find_issues
 from logger import RUN_ID, log
 from sources import live_snapshot, reference_data
 from world_model import WorldModel
@@ -127,12 +128,14 @@ INVESTIGATOR_SYSTEM = (
 )
 
 
-def investigator(issue, context, question=None, feedback=None):
+def investigator(issue, context, question=None, feedback=None, memory=None):
     prompt = (
         f"MONITOR FINDING:\n{issue['summary']}\n\n"
         f"FINDING EVIDENCE:\n{json.dumps(issue['evidence'], default=str)}\n\n"
         f"WORLD MODEL CONTEXT (entity: attribute=value (source)):\n{context}\n\n"
     )
+    if memory:
+        prompt += f"MEMORY (H-MEM, from this system's earlier checks):\n{memory}\n\n"
     if question:
         prompt += f"OPERATOR QUESTION: {question}\n\n"
     if feedback:
@@ -141,7 +144,7 @@ def investigator(issue, context, question=None, feedback=None):
     prompt += (
         'Return JSON: {"cause": "one sentence", '
         '"explanation": "2-4 sentences", '
-        '"actions": ["up to 3 concrete actions"], '
+        '"actions": ["at most 2 concrete actions"], '
         '"claims": [{"entity": "bed:4E-410A", "attribute": "status", '
         '"value": "dirty"}], '
         '"confidence": "high|medium|low"}'
@@ -176,7 +179,7 @@ def verify_claims(wm, draft, allowed=None, derived_evidence=None):
         problems.append("No claims cited. Every statement needs evidence.")
     for claim in claims:
         eid, attr = claim.get("entity"), claim.get("attribute")
-        if eid == "issue":
+        if eid in ("issue", "memory"):
             continue
         if (eid, attr) in derived and _matches_derived(claim.get("value"), derived[(eid, attr)]):
             continue
@@ -227,20 +230,21 @@ DOMAIN_NOTES = (
     "means admitted from the ED and waiting in an ED bed for an inpatient bed. "
     "Bed status 'reserved' means held for an incoming patient. If an attribute "
     "is absent from the evidence, the live feed has not set it: treat it as "
-    "not set, and cite it with value null."
+    "not set, and cite it with value null. Memory notes come from this "
+    "system's own earlier checks: cite them as entity \"memory\", attribute "
+    "\"recall\"; durations in them are lower bounds ('at least')."
 )
 INVESTIGATOR_SYSTEM += DOMAIN_NOTES
 CRITIC_SYSTEM += DOMAIN_NOTES
 
 
-def critic(wm, issue, context, draft, allowed=None):
+def critic(wm, issue, context, draft, allowed=None, memory=None):
     code_problems = verify_claims(wm, draft, allowed, issue.get("evidence"))
-    prompt = (
-        f"MONITOR FINDING:\n{issue['summary']}\n\n"
-        f"EVIDENCE:\n{context}\n\n"
-        f"DRAFT TO REVIEW:\n{json.dumps(draft, default=str)}\n\n"
-        f"AUTOMATED CLAIM CHECK FOUND: {code_problems or 'no problems'}"
-    )
+    prompt = f"MONITOR FINDING:\n{issue['summary']}\n\nEVIDENCE:\n{context}\n\n"
+    if memory:
+        prompt += f"MEMORY (recorded by this system; established):\n{memory}\n\n"
+    prompt += (f"DRAFT TO REVIEW:\n{json.dumps(draft, default=str)}\n\n"
+               f"AUTOMATED CLAIM CHECK FOUND: {code_problems or 'no problems'}")
     review = ask_json("critic", CRITIC_SYSTEM, prompt)
     blocking = list(review.get("blocking") or review.get("problems") or [])
     minor = list(review.get("minor") or [])
@@ -269,26 +273,34 @@ def explainer(draft, verified):
     log("explainer", "message", {"verified": verified, "message": message})
     return message
 
-
 # ---------- orchestration ----------
 
 def run(issue_index=0, question=None):
     wm = collector()
     issues = monitor(wm)
+    mem = HMem()
+    now = _model_now(wm)
+    seen = mem.observe(wm, issues, now)
+    print(f"[Memory] {len(seen['new'])} new, {len(seen['ongoing'])} ongoing, "
+          f"{len(seen['resolved'])} resolved since last check")
     if not issues:
+        mem.save()
         print("[Monitor] Nothing to investigate right now.")
         return None
+
     issue = issues[min(issue_index, len(issues) - 1)]
     eids = neighborhood(wm, issue["entities"])
     context = compact_context(wm, eids)
+    memory = mem.recall(issue, now)
     print(f"\n[Monitor] Investigating: {issue['summary']}")
+    print("[Memory] recall:\n   " + memory.replace("\n", "\n   "))
 
     feedback, draft, review, rounds = None, {}, {"verdict": "revise"}, []
     all_feedback = []
     for rnd in range(1, MAX_ROUNDS + 1):
-        draft = investigator(issue, context, question, feedback)
+        draft = investigator(issue, context, question, feedback, memory)
         print(f"\n[Investigator] round {rnd}: {draft.get('cause', '(no cause)')}")
-        review = critic(wm, issue, context, draft, set(eids))
+        review = critic(wm, issue, context, draft, set(eids), memory)
         rounds.append({"round": rnd, "draft": draft, "review": review})
         print(f"[Critic] round {rnd}: {review['verdict'].upper()}")
         for p in review["problems"][:5]:
@@ -312,12 +324,32 @@ def run(issue_index=0, question=None):
     print(f"\n[Explainer]\n{message}")
 
     result = {"run_id": RUN_ID, "issue": issue, "question": question,
-              "rounds": rounds, "verified": verified, "message": message}
+              "memory": memory, "rounds": rounds, "verified": verified,
+              "message": message}
     os.makedirs("logs", exist_ok=True)
     with open(f"logs/answer_{RUN_ID}.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, default=str)
+
+    mem.record_investigation(issue, result)
+    mem.consolidate()
+    mem.save()
     log("orchestrator", "done", {"verified": verified, "rounds": len(rounds)})
     return result
+
+
+def watch(minutes):
+    """Observe only (no LLM calls) once a minute, to build memory over time."""
+    import time
+    for i in range(minutes):
+        wm = collector()
+        issues = monitor(wm)
+        mem = HMem()
+        seen = mem.observe(wm, issues, _model_now(wm))
+        mem.save()
+        print(f"[Memory] check {i + 1}/{minutes}: {len(seen['new'])} new, "
+              f"{len(seen['ongoing'])} ongoing, {len(seen['resolved'])} resolved\n")
+        if i < minutes - 1:
+            time.sleep(60)
 
 
 if __name__ == "__main__":
@@ -325,5 +357,10 @@ if __name__ == "__main__":
     parser.add_argument("--issue", type=int, default=0,
                         help="which ranked issue to investigate (0 = most urgent)")
     parser.add_argument("--question", help="optional operator question")
+    parser.add_argument("--watch", type=int, metavar="MINUTES",
+                        help="observe only, once a minute, to build memory (no LLM)")
     args = parser.parse_args()
-    run(args.issue, args.question)
+    if args.watch:
+        watch(args.watch)
+    else:
+        run(args.issue, args.question)
