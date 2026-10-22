@@ -204,7 +204,7 @@ def find_issues(wm, now=None):
             f"Unit {unit}: {len(pids)} patient(s) cleared for discharge with "
             f"no active transport request, still holding beds"
             + (f"; {len(waiting)} ED boarder(s) waiting for a bed here" if waiting else ""),
-            ev, [*pids, *waiting])
+            ev, [_eid("unit", unit), *pids, *waiting])
 
     # 4. Feeds disagree about who is in which bed
     for bid, bed in beds:

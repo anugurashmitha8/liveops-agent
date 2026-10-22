@@ -1,4 +1,4 @@
-# Live Ops Agent
+﻿# Live Ops Copilot
 
 **Team Mirror Works · Open Agent Hackathon 2026 · Track 1: Solving Fragmented Intelligence**
 
@@ -72,8 +72,8 @@ Snowflake warehouse ┘    (federated      (both        (Meterless:      (bottle
 Requirements: Python 3.11+, a running Zetaris instance with two data sources configured (`api` for the live hospital feed, `riverside` for the Snowflake warehouse), and an NVIDIA API key.
 
 ```bash
-git clone https://github.com/anugurashmitha8/liveops-agent.git
-cd liveops-agent
+git clone https://github.com/anugurashmitha8/liveops-copilot.git
+cd liveops-copilot
 python -m venv venv
 venv\Scripts\activate          # Windows
 # source venv/bin/activate     # macOS / Linux

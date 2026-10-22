@@ -1,4 +1,4 @@
-"""HTTP API for the Live Ops agents, so any screen (including Live Ops) can use them.
+﻿"""HTTP API for the Live Ops agents, so any screen (including Live Ops) can use them.
 
 GET  /issues       current ranked issues, with how long memory has seen each one
 POST /investigate  run the agent team on one issue; returns the verified answer
@@ -17,7 +17,7 @@ import agents
 from hmem import HMem, issue_key
 from issues import _model_now
 
-app = FastAPI(title="Live Ops Agent API")
+app = FastAPI(title="Live Ops Copilot API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:8080", "http://127.0.0.1:8080"],
