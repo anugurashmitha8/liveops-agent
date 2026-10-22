@@ -16,7 +16,7 @@ from world_model import LIVE, REF, _eid
 
 OPEN_CLEANING = {"pending", "queued", "requested", "assigned", "in_progress"}
 OPEN_TRANSPORT = {"requested", "pending", "assigned", "in_progress"}
-DISCHARGE_STATES = {"discharge_ordered", "pending_discharge", "ready_for_discharge"}
+DISCHARGE_STATES = {"discharge_ordered", "ready_for_discharge"}
 
 
 def _parse_ts(value):
@@ -129,9 +129,11 @@ def find_issues(wm, now=None):
         ents = [pid]
         target = _val(p, "assigned_bed")
         if not target:
-            add("boarder_no_bed", "high",
-                f"{name} boarding in ED for {waited} min with no bed assigned",
-                ev, ents)
+            w = waited or 0
+            sev = "high" if w >= 60 else "medium" if w >= 30 else "low"
+            add("boarder_no_bed", sev,
+                f"{name} admitted, boarding in ED bed {_val(p, 'bed_id')} for "
+                f"{w} min; no inpatient bed assigned yet", ev, ents)
             continue
         bid = _eid("bed", target)
         bed = wm.entities.get(bid)
@@ -158,9 +160,13 @@ def find_issues(wm, now=None):
         tunit = _val(bed, "unit_id")
         if tunit and backlog.get(str(tunit)):
             cause += (f"; meanwhile {len(backlog[str(tunit)])} patient(s) on "
-                      f"{tunit} are cleared for discharge with no transport")
-        add("boarder_blocked", "high",
-            f"{name} boarding in ED for {waited} min: {cause}", ev, ents)
+                      f"{tunit} are cleared for discharge with no active transport request")
+        kind, sev = "boarder_blocked", "high"
+        if (bstatus in ("available", "reserved")
+                and _val(p, "transport_status") in OPEN_TRANSPORT):
+            kind = "boarder_moving"
+            sev = "low" if (waited or 0) < 30 else "medium"
+        add(kind, sev, f"{name} boarding in ED for {waited} min: {cause}", ev, ents)
 
     # 2. Cleaning past its target time
     for bid, bed in beds:
@@ -182,18 +188,23 @@ def find_issues(wm, now=None):
             f"(target {target}); {note}", ev, ents)
 
     # 3. Discharge backlog: beds held by patients cleared to leave
-    boarder_units = Counter(
-        str(_val(wm.entities.get(_eid("bed", _val(p, "assigned_bed"))), "unit_id"))
-        for _, p in patients
-        if _val(p, "status") == "boarding" and _val(p, "assigned_bed"))
+    boarders_by_unit = defaultdict(list)
+    for pid, p in patients:
+        if _val(p, "status") == "boarding" and _val(p, "assigned_bed"):
+            tbed = wm.entities.get(_eid("bed", _val(p, "assigned_bed")))
+            if tbed and _val(tbed, "unit_id"):
+                boarders_by_unit[str(_val(tbed, "unit_id"))].append(pid)
     for unit, pids in backlog.items():
-        waiting = boarder_units.get(unit, 0)
+        waiting = boarders_by_unit.get(unit, [])
+        ev = [_ev(pid, wm.entities[pid], a) for pid in pids[:5]
+              for a in ("status", "bed_id", "transport_status")]
+        ev += [_ev(bp, wm.entities[bp], a) for bp in waiting
+               for a in ("status", "bed_id", "assigned_bed")]
         add("discharge_backlog", "high" if waiting else "medium",
             f"Unit {unit}: {len(pids)} patient(s) cleared for discharge with "
-            f"no transport, still holding beds"
-            + (f"; {waiting} ED boarder(s) waiting for a bed here" if waiting else ""),
-            [_ev(pid, wm.entities[pid], "status") for pid in pids[:5]],
-            pids)
+            f"no active transport request, still holding beds"
+            + (f"; {len(waiting)} ED boarder(s) waiting for a bed here" if waiting else ""),
+            ev, [*pids, *waiting])
 
     # 4. Feeds disagree about who is in which bed
     for bid, bed in beds:
@@ -223,7 +234,7 @@ def find_issues(wm, now=None):
                 [_ev(bid, bed, "patient_id"), _ev(pid, p, "bed_id")],
                 [bid, pid])
 
-    # 5. Units with no free beds while beds wait on cleaning
+    # 5. Units with no free beds: who is waiting on cleaning, who could leave
     per_unit = defaultdict(Counter)
     for _, bed in beds:
         unit = _val(bed, "unit_id")
@@ -234,14 +245,20 @@ def find_issues(wm, now=None):
         if counts["available"] == 0 and waiting > 0:
             uid = _eid("unit", unit)
             uent = wm.entities.get(uid)
-            add("unit_full", "high",
-                f"Unit {unit} has 0 available beds "
-                f"(official count {_val(uent, 'BED_COUNT')}); "
-                f"{waiting} bed(s) waiting on cleaning",
-                [_ev(uid, uent, "BED_COUNT"),
-                 {"entity": uid, "attribute": "live_status_counts",
-                  "value": dict(counts), "source": LIVE, "as_of": None}],
-                [uid])
+            held = backlog.get(unit, [])
+            turning = [bid for bid, b in beds if _val(b, "unit_id") == unit
+                       and _val(b, "status") in ("dirty", "cleaning")]
+            ev = [_ev(uid, uent, "BED_COUNT"),
+                  {"entity": uid, "attribute": "live_status_counts",
+                   "value": dict(counts), "source": LIVE, "as_of": None}]
+            ev += [_ev(bid, wm.entities[bid], "cleaning_status") for bid in turning[:5]]
+            ev += [_ev(pid, wm.entities[pid], "status") for pid in held[:5]]
+            summary = (f"Unit {unit} has 0 available beds (official count "
+                       f"{_val(uent, 'BED_COUNT')}); {waiting} bed(s) waiting on cleaning")
+            if held:
+                summary += (f"; {len(held)} patient(s) cleared for discharge with "
+                            f"no active transport request are still holding beds")
+            add("unit_full", "high", summary, ev, [uid, *turning[:5], *held[:5]])
 
     return issues
 

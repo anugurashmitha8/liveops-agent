@@ -19,11 +19,11 @@ from logger import RUN_ID, log
 from sources import live_snapshot, reference_data
 from world_model import WorldModel
 
-MAX_ROUNDS = 3
+MAX_ROUNDS = 4
 SEV_RANK = {"high": 0, "medium": 1, "low": 2}
 TYPE_RANK = {"boarder_blocked": 0, "boarder_no_bed": 0, "unit_full": 1,
              "stale_bed": 2, "cleaning_overdue": 3, "discharge_backlog": 4,
-             "feed_mismatch": 5}
+             "feed_mismatch": 5 ,"boarder_moving": 6}
 KEY_ATTRS = {
     "patient": ["status", "bed_id", "assigned_bed", "unit_id", "admit_time",
                 "transport_status", "esi_acuity", "expected_discharge"],
@@ -122,7 +122,8 @@ INVESTIGATOR_SYSTEM = (
     "appear in the evidence, with the exact value shown. You may cite the "
     "Monitor's finding as entity \"issue\", attribute \"summary\". If the "
     "evidence is not enough to know the cause, say so and lower your confidence. "
-    "Reply with JSON only."
+    "Propose at most 2 actions, each tied directly to cited evidence; fewer "
+    "precise actions beat many vague ones. Reply with JSON only."
 )
 
 
@@ -149,23 +150,47 @@ def investigator(issue, context, question=None, feedback=None):
     log("investigator", "draft", draft)
     return draft
 
+def _same(a, b):
+    return str(a).strip().lower() == str(b).strip().lower()
 
-def verify_claims(wm, draft):
+
+def _matches_derived(claim_value, derived_value):
+    """Does a claim match a value the Monitor calculated (e.g. bed counts)?"""
+    if isinstance(derived_value, dict):
+        if isinstance(claim_value, str):
+            try:
+                claim_value = json.loads(claim_value.replace("'", '"'))
+            except json.JSONDecodeError:
+                return False
+        if isinstance(claim_value, dict):
+            return all(_same(derived_value.get(k), v) for k, v in claim_value.items())
+        return False
+    return _same(claim_value, derived_value)
+
+def verify_claims(wm, draft, allowed=None, derived_evidence=None):
     """Deterministic checks: cited entities exist and values match."""
     problems = []
     claims = draft.get("claims") or []
+    derived = {(e.get("entity"), e.get("attribute")): e.get("value") for e in (derived_evidence or [])}
     if not claims:
         problems.append("No claims cited. Every statement needs evidence.")
     for claim in claims:
         eid, attr = claim.get("entity"), claim.get("attribute")
         if eid == "issue":
             continue
+        if (eid, attr) in derived and _matches_derived(claim.get("value"), derived[(eid, attr)]):
+            continue
         ent = wm.entities.get(eid)
         if ent is None:
             problems.append(f"Claim cites {eid}, which does not exist in the World Model.")
             continue
+        if allowed is not None and eid not in allowed:
+            problems.append(f"Claim cites {eid}, which is not part of this issue's evidence.")
+            continue    
         slots = ent["attrs"].get(attr)
         if not slots:
+            if str(claim.get("value")).strip().lower() in ("none", "null", ""):
+                continue  # claim says "not set", and it isn't set: true
             problems.append(f"{eid} has no attribute '{attr}'.")
             continue
         actual = {str(s["value"]).strip().lower() for s in slots.values()}
@@ -177,20 +202,39 @@ def verify_claims(wm, draft):
     for eid in sorted(set(EID_RE.findall(text))):
         if eid not in wm.entities:
             problems.append(f"Text mentions {eid}, which does not exist.")
+        elif allowed is not None and eid not in allowed:
+            problems.append(f"Text mentions {eid}, which is not part of this issue's evidence.")
+        elif allowed is not None and eid not in allowed:
+            problems.append(f"Text mentions {eid}, which is not part of this issue's evidence.")
     return problems
 
 
 CRITIC_SYSTEM = (
-    "You are the Critic agent on a hospital operations team. Check another "
-    "agent's explanation against the evidence. Reject it if it states facts not "
-    "in the evidence, invents a cause, overstates certainty, or recommends "
-    "actions that do not follow from the evidence. Reply with JSON only: "
-    '{"verdict": "pass" or "revise", "problems": ["..."]}'
+    "You are the Critic agent on a hospital operations team. Review another "
+    "agent's explanation against the evidence. The Monitor finding is "
+    "established and may be cited.\n"
+    "A problem is BLOCKING only if it would mislead the bed manager: a false or "
+    "unsupported fact, an invented cause, normal in-progress activity described "
+    "as a failure, overstated confidence, or an action that is wrong, unsafe or "
+    "chases something already resolved.\n"
+    "Wording, style, or redundant but harmless actions are MINOR.\n"
+    'Reply with JSON only: {"blocking": ["..."], "minor": ["..."]}'
 )
 
+DOMAIN_NOTES = (
+    "\n\nDomain notes: a patient's bed_id is the bed they are in now; "
+    "assigned_bed is the inpatient bed they are waiting to move to. 'boarding' "
+    "means admitted from the ED and waiting in an ED bed for an inpatient bed. "
+    "Bed status 'reserved' means held for an incoming patient. If an attribute "
+    "is absent from the evidence, the live feed has not set it: treat it as "
+    "not set, and cite it with value null."
+)
+INVESTIGATOR_SYSTEM += DOMAIN_NOTES
+CRITIC_SYSTEM += DOMAIN_NOTES
 
-def critic(wm, issue, context, draft):
-    code_problems = verify_claims(wm, draft)
+
+def critic(wm, issue, context, draft, allowed=None):
+    code_problems = verify_claims(wm, draft, allowed, issue.get("evidence"))
     prompt = (
         f"MONITOR FINDING:\n{issue['summary']}\n\n"
         f"EVIDENCE:\n{context}\n\n"
@@ -198,9 +242,11 @@ def critic(wm, issue, context, draft):
         f"AUTOMATED CLAIM CHECK FOUND: {code_problems or 'no problems'}"
     )
     review = ask_json("critic", CRITIC_SYSTEM, prompt)
-    problems = code_problems + list(review.get("problems") or [])
-    verdict = "pass" if not code_problems and review.get("verdict") == "pass" else "revise"
-    result = {"verdict": verdict, "problems": problems,
+    blocking = list(review.get("blocking") or review.get("problems") or [])
+    minor = list(review.get("minor") or [])
+    problems = code_problems + blocking
+    verdict = "pass" if not problems else "revise"
+    result = {"verdict": verdict, "problems": problems, "minor": minor,
               "code_problems": code_problems}
     log("critic", "review", result)
     return result
@@ -233,24 +279,36 @@ def run(issue_index=0, question=None):
         print("[Monitor] Nothing to investigate right now.")
         return None
     issue = issues[min(issue_index, len(issues) - 1)]
-    context = compact_context(wm, neighborhood(wm, issue["entities"]))
+    eids = neighborhood(wm, issue["entities"])
+    context = compact_context(wm, eids)
     print(f"\n[Monitor] Investigating: {issue['summary']}")
 
     feedback, draft, review, rounds = None, {}, {"verdict": "revise"}, []
+    all_feedback = []
     for rnd in range(1, MAX_ROUNDS + 1):
         draft = investigator(issue, context, question, feedback)
         print(f"\n[Investigator] round {rnd}: {draft.get('cause', '(no cause)')}")
-        review = critic(wm, issue, context, draft)
+        review = critic(wm, issue, context, draft, set(eids))
         rounds.append({"round": rnd, "draft": draft, "review": review})
         print(f"[Critic] round {rnd}: {review['verdict'].upper()}")
         for p in review["problems"][:5]:
             print(f"   - {p}")
         if review["verdict"] == "pass":
             break
-        feedback = review["problems"]
+        all_feedback += review["problems"]
+        feedback = all_feedback
 
     verified = review["verdict"] == "pass"
-    message = explainer(draft, verified)
+    if verified:
+        message = explainer(draft, verified)
+    else:
+        message = (
+            f"UNVERIFIED: the agents could not agree on a cause after "
+            f"{len(rounds)} rounds.\n\nMONITOR FINDING: {issue['summary']}\n\n"
+            "OPEN CONCERNS FROM THE CRITIC:\n- "
+            + "\n- ".join(review["problems"][:4])
+        )
+        log("explainer", "unverified", {"message": message})
     print(f"\n[Explainer]\n{message}")
 
     result = {"run_id": RUN_ID, "issue": issue, "question": question,
