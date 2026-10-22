@@ -32,3 +32,18 @@ def test_critic_accepts_correct_claims():
         "claims": [{"entity": "bed:4E-410A", "attribute": "status", "value": "dirty"}],
     }
     assert verify_claims(_wm(), draft) == []
+
+def test_claim_that_attribute_is_unset_is_accepted():
+    draft = {
+        "cause": "c", "explanation": "e", "actions": [],
+        "claims": [{"entity": "bed:4E-410A", "attribute": "patient_id", "value": None}],
+    }
+    assert verify_claims(_wm(), draft) == []
+
+def test_claim_matching_monitor_evidence_is_accepted():
+    evidence = [{"entity": "unit:ICU", "attribute": "live_status_counts",
+                 "value": {"occupied": 11, "dirty": 1}}]
+    draft = {"cause": "c", "explanation": "e", "actions": [],
+             "claims": [{"entity": "unit:ICU", "attribute": "live_status_counts",
+                         "value": {"occupied": 11}}]}
+    assert verify_claims(WorldModel(), draft, None, evidence) == []

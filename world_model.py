@@ -269,6 +269,8 @@ class WorldModel:
                 "cleaning_type": task.get("clean_type"),
                 "cleaning_priority": task.get("priority"),
                 "cleaning_assigned_to": task.get("assigned_to"),
+                "cleaning_created_at": task.get("created_at"),
+                "cleaning_target_minutes": task.get("target_minutes"),
             }
             attrs = {k: v for k, v in attrs.items() if v is not None}
             self.upsert("bed", bed_id, attrs, LIVE, as_of)
@@ -294,6 +296,7 @@ class WorldModel:
                 "transport_to": req.get("to"),
                 "transport_priority": req.get("priority"),
                 "transporter": req.get("transporter"),
+                "transport_requested_at": req.get("requested_at"),
             }
             attrs = {k: v for k, v in attrs.items() if v is not None}
             self.upsert("patient", pid, attrs, LIVE, as_of)
