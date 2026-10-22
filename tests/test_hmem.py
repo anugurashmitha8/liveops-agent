@@ -49,3 +49,13 @@ def test_repeated_episodes_become_a_lesson(tmp_path):
         mem.observe(wm, [], T0 + timedelta(minutes=start + 10))
     lessons = mem.consolidate()
     assert "cleared 2 time(s)" in lessons["unit_full|unit:ICU"]["text"]
+
+def test_brief_gap_does_not_reset_the_clock(tmp_path):
+    mem = HMem(root=str(tmp_path))
+    wm = WorldModel()
+    mem.observe(wm, [ISSUE], T0)
+    gap = mem.observe(wm, [], T0 + timedelta(minutes=1))
+    assert gap["resolved"] == []
+    back = mem.observe(wm, [ISSUE], T0 + timedelta(minutes=2))
+    assert back["ongoing"] == ["unit_full|unit:ICU"]
+    assert "2 min ago" in mem.recall(ISSUE, T0 + timedelta(minutes=2))

@@ -21,6 +21,7 @@ from logger import RUN_ID, log
 
 LIVE = "live_api"
 TRACKED_STATUSES = {"boarding", "discharge_ordered", "ready_for_discharge"}
+RESOLVE_AFTER_MIN = 3  # an issue must be gone this long before it counts as resolved
 
 
 def _iso(dt):
@@ -131,6 +132,8 @@ class HMem:
                 ongoing.append(key)
 
         for key in [k for k in open_issues if k not in seen]:
+            if _mins(now, _parse(open_issues[key]["last_seen"])) < RESOLVE_AFTER_MIN:
+                continue  
             rec = open_issues.pop(key)
             self._append_episode({
                 "kind": "resolved", "key": key, "type": rec["type"],
