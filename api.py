@@ -24,7 +24,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-_lock = threading.Lock()
+_data_lock = threading.Lock()  # one World Model build / memory update at a time
+_job_lock = threading.Lock()   # one investigation at a time
 
 
 class InvestigateRequest(BaseModel):
@@ -39,7 +40,7 @@ def health():
 
 @app.get("/issues")
 def list_issues():
-    with _lock:
+    with _data_lock:
         wm = agents.collector()
         found = agents.monitor(wm)
         mem = HMem()
@@ -59,12 +60,13 @@ def list_issues():
 
 @app.post("/investigate")
 def investigate(req: InvestigateRequest):
-    if not _lock.acquire(blocking=False):
+    if not _job_lock.acquire(blocking=False):
         raise HTTPException(409, "An investigation is already running")
     try:
-        result = agents.run(question=req.question, key=req.key)
+        with _data_lock:  # waits for any list refresh to finish first
+            result = agents.run(question=req.question, key=req.key)
     finally:
-        _lock.release()
+        _job_lock.release()
     if result is None:
         raise HTTPException(404, "That issue is no longer present")
     return {
