@@ -24,3 +24,12 @@ def test_boarder_blocked_by_dirty_bed_with_cleaner_on_break():
     boarder = next(i for i in issues if i["type"] == "boarder_blocked")
     assert "staff:S1" in boarder["entities"]
     assert "on_break" in boarder["summary"]
+def test_reserved_bed_for_incoming_boarder_is_not_a_mismatch():
+    wm = WorldModel()
+    t = "2026-10-22T16:30:00Z"
+    wm.upsert("bed", "ICU-204", {"status": "reserved", "unit_id": "ICU",
+                                 "patient_id": "P9"}, LIVE, t)
+    wm.upsert("patient", "P9", {"status": "boarding", "bed_id": "ED-05",
+                                "assigned_bed": "ICU-204",
+                                "admit_time": "2026-10-22T16:20:00Z"}, LIVE, t)
+    assert not any(i["type"] == "feed_mismatch" for i in find_issues(wm))

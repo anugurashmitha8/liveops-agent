@@ -227,6 +227,9 @@ def find_issues(wm, now=None):
                  _ev(pid, p, "status")], [bid, pid])
             continue    
         pbed = _val(p, "bed_id")
+        if (_val(bed, "status") == "reserved"
+                and _val(p, "assigned_bed") == bed["native_id"]):
+            continue  # bed is held for this incoming patient: expected
         if pbed and pbed != bed["native_id"]:
             add("feed_mismatch", "medium",
                 f"Beds feed lists {occ} in {bed['native_id']}, "
