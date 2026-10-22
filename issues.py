@@ -162,7 +162,11 @@ def find_issues(wm, now=None):
             cause += (f"; meanwhile {len(backlog[str(tunit)])} patient(s) on "
                       f"{tunit} are cleared for discharge with no active transport request")
         kind, sev = "boarder_blocked", "high"
-        if (bstatus in ("available", "reserved")
+        if bstatus == "reserved" and _val(p, "transport_status") == "completed":
+            kind, sev = "stale_boarder", "medium"
+            cause = (f"transport to {target} is completed, but the patient is still "
+                     f"listed as boarding and the bed as reserved: records not updated")
+        elif (bstatus in ("available", "reserved")
                 and _val(p, "transport_status") in OPEN_TRANSPORT):
             kind = "boarder_moving"
             sev = "low" if (waited or 0) < 30 else "medium"
