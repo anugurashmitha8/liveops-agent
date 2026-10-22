@@ -14,7 +14,7 @@ import json
 import os
 import re
 
-from hmem import HMem
+from hmem import HMem, issue_key
 from issues import _model_now, find_issues
 from logger import RUN_ID, log
 from sources import live_snapshot, reference_data
@@ -275,7 +275,7 @@ def explainer(draft, verified):
 
 # ---------- orchestration ----------
 
-def run(issue_index=0, question=None):
+def run(issue_index=0, question=None, key=None):
     wm = collector()
     issues = monitor(wm)
     mem = HMem()
@@ -288,7 +288,21 @@ def run(issue_index=0, question=None):
         print("[Monitor] Nothing to investigate right now.")
         return None
 
-    issue = issues[min(issue_index, len(issues) - 1)]
+    if key:
+        issue = next((i for i in issues if issue_key(i) == key), None)
+        if issue is None:
+            target = key.split("|", 1)[-1]  # e.g. "unit:ICU"
+            issue = next((i for i in issues
+                          if issue_key(i).endswith("|" + target)), None)
+            if issue:
+                print(f"[Monitor] {key} has cleared; investigating "
+                      f"{issue_key(issue)} instead.")
+        if issue is None:
+            mem.save()
+            print(f"[Monitor] Issue {key} is no longer present.")
+            return None
+    else:
+        issue = issues[min(issue_index, len(issues) - 1)]
     eids = neighborhood(wm, issue["entities"])
     context = compact_context(wm, eids)
     memory = mem.recall(issue, now)
