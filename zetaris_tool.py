@@ -62,7 +62,28 @@ def run_sql(sql, limit=100, _retry=True):
     cols, *rows = lines
     return [dict(zip(cols, row)) for row in rows]
 
+# --- retry: Zetaris sometimes answers 400/5xx for a moment (e.g. while a source
+# reconnects). Try again twice, with a short pause, before giving up.
+import time as _time
+
+from logger import log as _log
+
+_run_sql_once = run_sql
+
+
+def run_sql(*args, **kwargs):
+    for attempt in range(1, 4):
+        try:
+            return _run_sql_once(*args, **kwargs)
+        except RuntimeError as err:
+            temporary = str(err).startswith(("Zetaris 400", "Zetaris 5"))
+            if not temporary or attempt == 3:
+                raise
+            _log("zetaris", "retry", {"attempt": attempt, "error": str(err)[:200]})
+            _time.sleep(2 * attempt)
+
 if __name__ == "__main__":
     rows = run_sql("SELECT * FROM NY_TAXI.customers LIMIT 5")
     print("Rows:", len(rows))
     print(rows[0])
+

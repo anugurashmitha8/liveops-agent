@@ -64,7 +64,10 @@ def investigate(req: InvestigateRequest):
         raise HTTPException(409, "An investigation is already running")
     try:
         with _data_lock:  # waits for any list refresh to finish first
-            result = agents.run(question=req.question, key=req.key)
+            try:
+                result = agents.run(question=req.question, key=req.key)
+            except Exception as err:
+                raise HTTPException(503, f"Couldn't read hospital data: {err}") from err
     finally:
         _job_lock.release()
     if result is None:
