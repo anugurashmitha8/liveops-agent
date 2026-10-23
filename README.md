@@ -10,7 +10,7 @@ Live Ops Copilot is a team of AI agents that does exactly that. It reads both so
 
 ## What an operator sees
 
-A real answer from the live system (Live Ops map, Copilot panel):
+A real answer from the live system, shortened (Live Ops map, Copilot panel):
 
 > **Checked and confirmed by the Critic (1 round)**
 >
@@ -28,7 +28,6 @@ No single source shows this. Patient status, bed status and transport requests c
 
 ## Architecture
 
-```
 ```mermaid
 flowchart TD
     subgraph S["1. Hospital data, scattered"]
@@ -70,7 +69,6 @@ flowchart TD
 ```
 
 Every agent step is logged to `logs/*.jsonl`, and every memory change to `memory/ledger.jsonl`.
-```
 
 | Component | File | What it does |
 |---|---|---|
@@ -84,6 +82,7 @@ Every agent step is logged to `logs/*.jsonl`, and every memory change to `memory
 | Live Ops panel | `integrations/liveops-panel/` | The Copilot panel added to the Live Ops map (React + TypeScript) |
 | LLM | `llm.py` | NVIDIA Nemotron through an OpenAI-compatible endpoint |
 | Logging | `logger.py` | JSONL trace of every step, one file per run |
+| Exploration | `scripts/` | One-off tools used to map the data sources (schemas, ID overlap, name checks); run as `python -m scripts.<name>` |
 
 ---
 
@@ -148,7 +147,7 @@ location /copilot/ {
 }
 ```
 
-The panel code is in `integrations/liveops-panel/` (`useCopilot.tsx`, `copilot.css`). Live Ops itself needs three lines added to its map page: an import, the hook, and the button and panel.
+The panel code is in `integrations/liveops-panel/` (`useCopilot.tsx`, `copilot.css`). Live Ops itself needs three small edits to its map page: an import, the hook, and the toolbar button and panel.
 
 ---
 
@@ -217,7 +216,7 @@ Built before the hackathon and used here as infrastructure, not part of this ent
 - the **Zetaris** instance and its source connections;
 - the **live hospital API simulator** and the **Snowflake warehouse** with its simulator.
 
-Everything in this repository, plus the Copilot panel, its three-line hook-up in the Live Ops map page and the `/copilot/` nginx route, was written during the hackathon, starting 22 October 2026.
+Everything in this repository, plus the Copilot panel, its hook-up in the Live Ops map page and the `/copilot/` nginx route, was written during the hackathon, starting 22 October 2026.
 
 ## License
 
