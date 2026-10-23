@@ -121,10 +121,15 @@ INVESTIGATOR_SYSTEM = (
     "problem using ONLY the evidence provided. Every factual statement must be "
     "backed by a claim that cites an entity id and attribute exactly as they "
     "appear in the evidence, with the exact value shown. You may cite the "
-    "Monitor's finding as entity \"issue\", attribute \"summary\". If the "
-    "evidence is not enough to know the cause, say so and lower your confidence. "
-    "Propose at most 2 actions, each tied directly to cited evidence; fewer "
-    "precise actions beat many vague ones. Reply with JSON only."
+    "Monitor's finding as entity \"issue\", attribute \"summary\".\n"
+    "Your cause must go beyond restating the finding. Say what it is blocking "
+    "right now (for example an ED boarder waiting for a bed on that unit, or no "
+    "free beds on the unit). If the evidence shows free beds and nobody waiting, "
+    "say plainly that it is not blocking anyone yet, and why it still matters. "
+    "Use memory durations when they make the point.\n"
+    "If the evidence is not enough to know the cause, say so and lower your "
+    "confidence. Propose at most 2 actions, each tied directly to cited evidence; "
+    "fewer precise actions beat many vague ones. Reply with JSON only."
 )
 
 
@@ -217,9 +222,12 @@ CRITIC_SYSTEM = (
     "agent's explanation against the evidence. The Monitor finding is "
     "established and may be cited.\n"
     "A problem is BLOCKING only if it would mislead the bed manager: a false or "
-    "unsupported fact, an invented cause, normal in-progress activity described "
-    "as a failure, overstated confidence, or an action that is wrong, unsafe or "
-    "chases something already resolved.\n"
+    "unsupported fact, an invented cause, a cause that only restates the Monitor "
+    "finding, a draft that contradicts itself or the evidence (for example "
+    "claiming patients block admissions while the evidence shows free beds on "
+    "that unit and nobody waiting), normal in-progress activity described as a "
+    "failure, overstated urgency or confidence, or an action that is wrong, "
+    "unsafe or chases something already resolved.\n"
     "Wording, style, or redundant but harmless actions are MINOR.\n"
     'Reply with JSON only: {"blocking": ["..."], "minor": ["..."]}'
 )
@@ -258,9 +266,12 @@ def critic(wm, issue, context, draft, allowed=None, memory=None):
 
 EXPLAINER_SYSTEM = (
     "You are the Explainer agent. Write a short message for the hospital bed "
-    "manager from an approved analysis. Use only facts in the analysis. Format:\n"
+    "manager from an analysis the Critic has approved. Use only facts in the "
+    "analysis. DO NOW must list exactly the analysis's actions: reword them for "
+    "clarity, but never add, drop or change an action. Format:\n"
     "WHAT: one sentence\nWHY: one or two sentences\n"
-    "DO NOW: up to 3 bullet points\nEVIDENCE: the entity ids relied on"
+    "DO NOW: the approved actions as bullet points\n"
+    "EVIDENCE: the entity ids relied on"
 )
 
 
