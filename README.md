@@ -29,17 +29,47 @@ No single source shows this. Patient status, bed status and transport requests c
 ## Architecture
 
 ```
-Live hospital API ──┐
-                    ├─► Zetaris ─► sources.py ─► World Model ─► Monitor ─► Investigator ⇄ Critic ─► Explainer
-Snowflake warehouse ┘   (federated                (Meterless)   (issues.py)   (Nemotron)   (code checks   (operator
-                         SQL access)                    │                                  + Nemotron)    message)
-                                                        └──────────── H-MEM memory (Meterless) ────────────┘
-                                                                              │
-                                              Copilot API (api.py, FastAPI) ◄─┘
-                                                        │
-                              Live Ops map ─► nginx /copilot/ route ─► Copilot panel
-                                                        │
-                                              every step ─► logs/*.jsonl, memory/ledger.jsonl
+```mermaid
+flowchart TD
+    subgraph S["1. Hospital data, scattered"]
+        LIVE["Live hospital API<br/>patients, beds, cleaning,<br/>transport, staff, ambulances"]
+        SNOW["Snowflake warehouse<br/>unit sizes, staff roster,<br/>ambulance crews"]
+    end
+
+    ZET["Zetaris<br/>one SQL view over both, no copying"]
+
+    subgraph M["2. Shared memory (Meterless engines)"]
+        WM["World Model<br/>one connected picture,<br/>every fact tagged with its source"]
+        HM["H-MEM<br/>how long problems last,<br/>what cleared before"]
+    end
+
+    subgraph A["3. Agent team (NVIDIA Nemotron)"]
+        MON["Monitor<br/>finds and ranks problems"]
+        INV["Investigator<br/>explains why, cites records"]
+        CRI["Critic<br/>checks every claim"]
+        EXP["Explainer<br/>writes the answer"]
+    end
+
+    subgraph U["4. Where staff see it"]
+        API["Copilot API<br/>FastAPI"]
+        PANEL["Live Ops 3D map<br/>Copilot panel"]
+    end
+
+    LIVE --> ZET
+    SNOW --> ZET
+    ZET --> WM
+    WM --> MON
+    MON --> INV
+    HM -. "how long, what happened before" .-> INV
+    INV -- "draft" --> CRI
+    CRI -- "sent back, up to 4 rounds" --> INV
+    CRI -- "confirmed" --> EXP
+    EXP -- "remembers the outcome" --> HM
+    EXP --> API
+    API -- "/copilot/ route" --> PANEL
+```
+
+Every agent step is logged to `logs/*.jsonl`, and every memory change to `memory/ledger.jsonl`.
 ```
 
 | Component | File | What it does |
