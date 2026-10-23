@@ -1,0 +1,110 @@
+{
+    "project": "Live Ops Copilot",
+    "tagline": "AI agents that join scattered hospital data, explain why patient flow is stuck, and check every claim before an operator sees it.",
+    "hackathon": "Open Agent Hackathon 2026",
+    "track": "Solving Fragmented Intelligence",
+    "team": {
+      "name": "Mirror Works",
+      "members": ["Rashmitha Anugu (leader)", "Puneeth Balaji"]
+    },
+    "repository": "https://github.com/anugurashmitha8/liveops-copilot",
+    "license": "MIT",
+  
+    "meterless_engines": [
+      {
+        "engine": "World Model",
+        "spec": "https://github.com/Meterless/Meterless/tree/main/engines/world-model",
+        "implementation": "Own Python implementation following the engine's pattern (not the TypeScript reference package).",
+        "files": ["world_model.py"],
+        "used_for": "Shared state that every agent reads and writes: hospital entities (beds, patients, staff, units, ambulances, locations) with stable ids, per-source values with timestamps (provenance), and relations.",
+        "where_used": [
+          {"feature": "Collector agent", "how": "ingest_live() and ingest_reference() load both sources through Zetaris into the model"},
+          {"feature": "Monitor", "how": "issues.py finds bottlenecks by joining entities and relations in the model"},
+          {"feature": "Investigator agent", "how": "receives its evidence as a compact view of the model (context())"},
+          {"feature": "Critic agent", "how": "verifies every cited entity, attribute and value against the model in code"}
+        ],
+        "tests": [
+          "tests/test_world_model.py::test_idempotency",
+          "tests/test_world_model.py::test_stable_ids",
+          "tests/test_world_model.py::test_conflict_staff_outside_department"
+        ]
+      },
+      {
+        "engine": "H-MEM",
+        "spec": "https://github.com/Meterless/Meterless/tree/main/engines/hmem",
+        "implementation": "Own Python implementation following the engine's tiers (not the TypeScript reference package); memory is plain files on disk under memory/.",
+        "files": ["hmem.py"],
+        "used_for": "Gives the agents a sense of time the live feed lacks: when each problem and patient status was first seen, which problems cleared and after how long, and lessons from repeated problems.",
+        "tiers": {
+          "working": "memory/working.json: open issues and tracked patient statuses with first-seen times",
+          "episodic": "memory/episodic.jsonl: every investigation and every resolved issue with its duration",
+          "semantic": "memory/semantic.json: lessons consolidated from repeated episodes",
+          "ledger": "memory/ledger.jsonl: every memory write with its reason"
+        },
+        "conflict_resolution": "A newer live observation replaces an older one; the ledger records what was replaced and why. An issue must be absent for 3 minutes before it counts as resolved.",
+        "where_used": [
+          {"feature": "Every agent run and the watch mode", "how": "observe() updates working memory and records resolved episodes"},
+          {"feature": "Investigator and Critic agents", "how": "recall() adds how long the problem and each patient status have lasted, past resolutions and lessons"},
+          {"feature": "After each investigation", "how": "record_investigation() and consolidate() write episodic and semantic memory"},
+          {"feature": "Live Ops panel", "how": "shows how long each problem has been open and what the Copilot remembers"}
+        ],
+        "tests": [
+          "tests/test_hmem.py::test_issue_duration_then_resolution",
+          "tests/test_hmem.py::test_newer_status_replaces_older_and_is_ledgered",
+          "tests/test_hmem.py::test_memory_persists_across_sessions",
+          "tests/test_hmem.py::test_repeated_episodes_become_a_lesson",
+          "tests/test_hmem.py::test_brief_gap_does_not_reset_the_clock"
+        ]
+      }
+    ],
+  
+    "sponsor_technology": {
+      "zetaris": {
+        "role": "Data layer: one SQL interface over a live hospital REST API and a Snowflake warehouse, with no copying. Every read in the project goes through Zetaris.",
+        "files": ["zetaris_tool.py", "sources.py"],
+        "sources": {
+          "api": "live hospital feed: patients, beds, cleaning tasks, transport requests, staff locations, ambulances",
+          "riverside": "Snowflake warehouse, used for reference data: unit capacities, staff roster and shifts, ambulance crews, floors, locations"
+        }
+      },
+      "nvidia": {
+        "role": "Reasoning model for the Investigator, Critic and Explainer agents.",
+        "model": "nemotron-3.5-lightning-30b-a3b",
+        "files": ["llm.py", "agents.py"]
+      },
+      "ai_coding_tools": {
+        "cursor": "Cursor's agent built world_model.py and its first tests (screenshots in the submission).",
+        "other": "Later work was written with Claude."
+      }
+    },
+  
+    "agents": [
+      {"name": "Collector", "role": "Loads fresh data from both sources into the World Model"},
+      {"name": "Monitor", "role": "Finds and ranks problems, each with its evidence"},
+      {"name": "Investigator", "role": "Explains the cause with cited evidence (NVIDIA Nemotron)"},
+      {"name": "Critic", "role": "Checks every claim in code and with Nemotron; sends weak drafts back, up to 4 rounds"},
+      {"name": "Explainer", "role": "Writes the operator message, or marks the answer unverified"}
+    ],
+  
+    "evidence_for_judges": {
+      "tests": "python -m pytest tests/ -v (14 tests)",
+      "traces": "logs/run_*.jsonl (every agent step) and logs/answer_run_*.json (each full answer)",
+      "memory_ledger": "memory/ledger.jsonl",
+      "api_docs": "http://localhost:8100/docs when the API is running"
+    },
+  
+    "integration": {
+      "live_ops_panel": "integrations/liveops-panel/useCopilot.tsx and copilot.css, added to the Live Ops map page",
+      "route": "Live Ops nginx passes /copilot/ to the Copilot API, keeping the page's connect-src 'self' policy unchanged"
+    },
+  
+    "pre_existing_components": [
+      "Live Ops 3D operations map, including its rule-based Ask, sensor Watch, optional LLM rephrasing and on-site connector",
+      "The Zetaris instance and its source connections",
+      "The live hospital API simulator",
+      "The Snowflake warehouse and its simulator"
+    ],
+    "built_during_hackathon": "Everything in this repository, plus the Live Ops Copilot panel, its hook-up in the Live Ops map page and the /copilot/ nginx route. Work started 22 October 2026.",
+  
+    "data": "Simulated hospital data; no real patients."
+  }
